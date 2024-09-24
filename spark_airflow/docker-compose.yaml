@@ -49,7 +49,7 @@ x-airflow-common:
   # In order to add custom dependencies or upgrade provider packages you can use your extended image.
   # Comment the image line, place your Dockerfile in the directory where you placed the docker-compose.yaml
   # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
-  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.10.2}
+  build: airflow
   # build: .
   environment:
     &airflow-common-env
@@ -61,6 +61,7 @@ x-airflow-common:
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW_CONN_SPARK_DEFAULT: 'spark://spark-master:7077'
     # yamllint disable rule:line-length
     # Use simple http server on scheduler for health checks
     # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
@@ -80,6 +81,7 @@ x-airflow-common:
     - input:/app/input    
     - output:/app/output
     - days_aggregate:/app/days_aggregate
+    - spark_app:/app/spark_app
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -287,6 +289,35 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  spark-master:
+    build: spark_image
+    restart: always
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "7077:7077"  # Spark master port
+      - "8000:8000"  # Spark web UI port
+    volumes:
+      - ./spark:/opt/spark
+      - input:/app/input       
+      - output:/app/output
+      - days_aggregate:/app/days_aggregate
+      - spark_app:/app/spark_app
+
+  spark-worker:
+    build: spark_image
+    restart: always
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    depends_on:
+      - spark-master
+    volumes:
+      - input:/app/input    
+      - output:/app/output
+      - days_aggregate:/app/days_aggregate
+      - spark_app:/app/spark_app
+
 volumes:
   postgres-db-volume:
 
@@ -310,3 +341,10 @@ volumes:
       o: bind
       type: none
       device: ./days_aggregate
+
+  spark_app:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ./spark_app
